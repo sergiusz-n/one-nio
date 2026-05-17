@@ -12,6 +12,8 @@ plugins {
     `java-library`
     id("org.jreleaser") version "1.20.0"
     `maven-publish`
+
+    application
 }
 
 repositories {
@@ -88,7 +90,7 @@ tasks {
             //can't set --release 8 cause non-public API is used
             //release.set(8)
             javaCompiler = project.javaToolchains.compilerFor {
-                languageVersion = JavaLanguageVersion.of(8)
+                languageVersion = JavaLanguageVersion.of(17)
             }
         }
     }
@@ -198,9 +200,42 @@ tasks.compileJava {
     }
 }
 
+
+tasks.register<JavaExec>("runJava") {
+    group = "Execution"
+    description = "Run one.nio.http.HttpServerTest.main()"
+    dependsOn("testClasses")
+
+    classpath = sourceSets.test.get().runtimeClasspath
+    if (hasProperty("launch")) {
+        mainClass.set("${property("launch")}")
+    }
+    if (hasProperty("args")) {
+        args = property("args") as List<String>
+    }
+}
+
+tasks.register<JavaExec>("runHttpServerTest") {
+    group = "Execution"
+    description = "Run one.nio.http.HttpServerTest.main()"
+
+    dependsOn("testClasses")
+
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("one.nio.http.HttpServerTest")
+    if (project.hasProperty("args")) {
+        args(project.property("args"))
+    }
+    jvmArgs(
+        "-Dorg.apache.logging.log4j.simplelog.StatusLogger.level=DEBUG",
+        "-Dlog4j2.configurationFile=log4j2.properties"
+    )
+}
+
 license {
     include("**/*.java")
     exclude("**/lz4/*.java")
+
     header(rootProject.file("COPYRIGHT_HEADER.txt"))
 }
 
@@ -259,6 +294,12 @@ publishing {
             setUrl(layout.buildDirectory.dir("staging-deploy"))
         }
     }
+}
+
+application {
+
+    // classpath += files(jar.get().archiveFile)
+
 }
 
 fun MavenPublication.addPom() {

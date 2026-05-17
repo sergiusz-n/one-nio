@@ -26,9 +26,36 @@ import javax.net.ssl.SSLException;
 import one.nio.mgt.Management;
 import one.nio.util.ByteArrayBuilder;
 import one.nio.util.Utf8;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 class NativeSslContext extends SslContext {
     private static final AtomicInteger counter = new AtomicInteger();
+
+    private static final class JniLogger {
+        private static final Logger log = LoggerFactory.getLogger(NativeSslContext.class);
+        private static void log(String level, String message) {
+            switch (level) {
+                case "TRACE":
+                    log.trace(message);
+                    break;
+                case "DEBUG":
+                    log.debug(message);
+                    break;
+                case "INFO":
+                    log.info(message);
+                    break;
+                case "WARN":
+                    log.warn(message);
+                    break;
+                case "ERROR":
+                    log.error(message);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unknown log level: " + level);
+            }
+        }
+    }
 
 
     private static class CompressionAlgorithms {

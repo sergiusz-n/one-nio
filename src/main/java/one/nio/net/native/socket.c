@@ -194,7 +194,7 @@ Java_one_nio_net_NativeSocket_initNatives(JNIEnv* env, jclass cls, jboolean pref
     struct sigaction sa;
 
     // Check IPv6 support
-    if (!preferIPv4) {
+    if (false) {
         int s = socket(AF_INET6, SOCK_STREAM, 0);
         if (s != -1) {
             use_IPv6 = 1;
