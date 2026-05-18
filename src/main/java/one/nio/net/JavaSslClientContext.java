@@ -50,6 +50,16 @@ public class JavaSslClientContext extends SslContext {
     }
 
     @Override
+    public void resetSslStats() {
+        // Ignore
+    }
+
+    @Override
+    public SslStats getSslStats() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setRdrand(boolean rdrand) throws SSLException {
         // Ignore
     }

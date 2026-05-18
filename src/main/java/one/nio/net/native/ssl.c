@@ -91,12 +91,20 @@ typedef struct {
 } JniLogger;
 
 typedef struct {
+    uint64_t handshakes_total;
+    uint64_t handshakes_failed;
+    uint64_t handshake_timeout;
+    uint64_t session_reuses;
+} SslStats;
+
+typedef struct {
     pthread_rwlock_t lock;
     char* pass;
     TicketArray tickets;
     ALPNProtocols alpn;
     OCSPResponse ocsp;
     SNIContexts sni;
+    SslStats sslStats;
     jboolean debug;
     JniLogger sslContextLogger;
     JniLogger sslSocketLogger;
@@ -129,6 +137,10 @@ static jclass c_NativeSslSocket_JniLogger;
 static jmethodID m_NativeSslSocket_log;
 
 static jmethodID m_NativeSslContext_log;
+
+static jclass c_SslStats;
+static jmethodID m_SslStats_constructor;
+
 
 
 
@@ -582,6 +594,7 @@ static void ssl_info_callback(const SSL* ssl, int cb, int ret) {
             SSL_set_fd((SSL*)ssl, preclosed_socket);
         }
 #endif
+        appData->sslStats.handshakes_total++;
     } else if (cb == SSL_CB_HANDSHAKE_DONE) {
         intptr_t flags = (intptr_t)SSL_get_app_data(ssl);
         if (flags & SF_SERVER) {
@@ -611,6 +624,7 @@ static void ssl_info_callback(const SSL* ssl, int cb, int ret) {
                    ssl_get_peer_ip(ssl, clientIP, sizeof(clientIP)),
                    ssl_get_host_ip_port(ssl, serverIP, sizeof(serverIP))
             );
+            appData->sslStats.session_reuses += SSL_session_reused(ssl) ? 1 : 0;
         } else if (ret == 0) {
             long verificationResult = SSL_get_verify_result(ssl);
             jniLogger->log("ERROR", "SSL handshake failed, verification:'%s', client: %s, server: %s",
@@ -618,6 +632,7 @@ static void ssl_info_callback(const SSL* ssl, int cb, int ret) {
                    ssl_get_peer_ip(ssl, clientIP, sizeof(clientIP)),
                    ssl_get_host_ip_port(ssl, serverIP, sizeof(serverIP))
             );
+            appData->sslStats.handshakes_failed++;
         } else {
             char error[64];
             long e = ERR_peek_error();
@@ -629,6 +644,7 @@ static void ssl_info_callback(const SSL* ssl, int cb, int ret) {
                   ssl_get_peer_ip(ssl, clientIP, sizeof(clientIP)),
                   ssl_get_host_ip_port(ssl, serverIP, sizeof(serverIP))
            );
+           appData->sslStats.handshakes_failed++;
         }
     }
 }
@@ -691,6 +707,8 @@ Java_one_nio_net_NativeSslContext_init(JNIEnv* env, jclass cls) {
     c_NativeSslSocket_JniLogger = (*env)->NewGlobalRef(env, (*env)->FindClass(env, "one/nio/net/NativeSslSocket$JniLogger"));
     m_NativeSslSocket_log = (*env)->GetStaticMethodID(env, c_NativeSslSocket_JniLogger, "log", "(Ljava/lang/String;Ljava/lang/String;)V");
 
+    c_SslStats = (*env)->NewGlobalRef(env, (*env)->FindClass(env, "one/nio/net/SslStats"));
+    m_SslStats_constructor = (*env)->GetMethodID(env, c_SslStats, "<init>", "(JJJJ)V");
 }
 
 static int new_session_cb(SSL* ssl, SSL_SESSION* ssl_session) {
@@ -836,6 +854,34 @@ Java_one_nio_net_NativeSslContext_getDebug(JNIEnv* env, jobject self) {
     SSL_CTX* ctx = (SSL_CTX*)(intptr_t)(*env)->GetLongField(env, self, f_ctx);
     AppData* appData = SSL_CTX_get_app_data(ctx);
     return appData->debug;
+}
+
+JNIEXPORT void JNICALL
+Java_one_nio_net_NativeSslContext_resetSslStats(JNIEnv* env, jobject self) {
+    SSL_CTX* ctx = (SSL_CTX*)(intptr_t)(*env)->GetLongField(env, self, f_ctx);
+    AppData* appData = SSL_CTX_get_app_data(ctx);
+    if (appData == NULL || pthread_rwlock_rdlock(&appData->lock) != 0) {
+        return;
+    }
+
+    memset(&appData->sslStats, 0, sizeof(appData->sslStats));
+    pthread_rwlock_unlock(&appData->lock);
+}
+
+JNIEXPORT jobject JNICALL
+Java_one_nio_net_NativeSslContext_getSslStats(JNIEnv* env, jobject self) {
+    SSL_CTX* ctx = (SSL_CTX*)(intptr_t)(*env)->GetLongField(env, self, f_ctx);
+    AppData* appData = SSL_CTX_get_app_data(ctx);
+
+    return (*env)->NewObject(
+            env,
+            c_SslStats,
+            m_SslStats_constructor,
+            (jlong)appData->sslStats.handshakes_total,
+            (jlong)appData->sslStats.handshakes_failed,
+            (jlong)appData->sslStats.handshake_timeout,
+            (jlong)appData->sslStats.session_reuses
+    );
 }
 
 JNIEXPORT void JNICALL
@@ -1300,6 +1346,7 @@ Java_one_nio_net_NativeSslSocket_sslFree(JNIEnv* env, jclass cls, jlong sslptr) 
                ssl_get_peer_ip(ssl, clientIP, sizeof(clientIP)),
                ssl_get_host_ip_port(ssl, serverIP, sizeof(serverIP))
         );
+        appData->sslStats.handshake_timeout += (intptr_t)SSL_get_app_data(ssl) & SF_FATAL_ALERT ? 0 : 1;
     }
     SSL_free(ssl);
 }

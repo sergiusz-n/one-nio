@@ -305,6 +305,9 @@ public abstract class SslContext {
     public abstract void setDebug(boolean debug);
     public abstract boolean getDebug();
 
+    public abstract void resetSslStats();
+    public abstract SslStats getSslStats();
+
     public abstract void setRdrand(boolean rdrand) throws SSLException;
     public abstract void setProtocols(String protocols) throws SSLException;
     public abstract void setCiphers(String ciphers) throws SSLException;
