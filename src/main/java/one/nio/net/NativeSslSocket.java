@@ -16,13 +16,38 @@
 
 package one.nio.net;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
-import java.io.RandomAccessFile;
 
 class NativeSslSocket extends NativeSocket {
     NativeSslContext context;
     long ssl;
-
+    private static final class JniLogger {
+        private static final Logger log = LoggerFactory.getLogger(NativeSslSocket.class);
+        private static void log(String level, String message) {
+            switch (level) {
+                case "TRACE":
+                    log.trace(message);
+                    break;
+                case "DEBUG":
+                    log.debug(message);
+                    break;
+                case "INFO":
+                    log.info(message);
+                    break;
+                case "WARN":
+                    log.warn(message);
+                    break;
+                case "ERROR":
+                    log.error(message);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unknown log level: " + level);
+            }
+        }
+    }
     private volatile boolean isEarlyDataAccepted = false;
     private volatile boolean isHandshakeDone = false;
 

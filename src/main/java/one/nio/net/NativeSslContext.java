@@ -57,7 +57,6 @@ class NativeSslContext extends SslContext {
         }
     }
 
-
     private static class CompressionAlgorithms {
         // Possible compression values from RFC8879 (Refer to openssl/tls1.h)
         public static int ZLIB =    1;

@@ -125,6 +125,10 @@ static jmethodID m_removeSession;
 
 static jclass c_NativeSslContext_JniLogger;
 static jmethodID m_NativeSslContext_log;
+static jclass c_NativeSslSocket_JniLogger;
+static jmethodID m_NativeSslSocket_log;
+
+static jmethodID m_NativeSslContext_log;
 
 
 
@@ -149,6 +153,8 @@ static unsigned char dh2048_p[] = {
 };
 static unsigned char dh2048_g[] = { 0x02 };
 
+static char* ssl_get_peer_ip(const SSL* ssl, char* buf, size_t len);
+static char* ssl_get_host_ip_port(const SSL* ssl, char* buf, size_t len);
 
 extern void throw_socket_closed_cached(JNIEnv* env);
 extern jobject sockaddr_to_java(JNIEnv* env, struct sockaddr_storage* sa, socklen_t len);
@@ -163,6 +169,11 @@ static void throw_ssl_exception(JNIEnv* env) {
 
 static int check_ssl_error(JNIEnv* env, SSL* ssl, int ret) {
     char buf[64];
+    AppData* appData = SSL_CTX_get_app_data(SSL_get_SSL_CTX(ssl));
+    JniLogger* sslSocketLogger = &appData->sslSocketLogger;
+    char serverIP[64], clientIP[64];
+    char error[64];
+
     int err = SSL_get_error(ssl, ret);
     switch (err) {
         case SSL_ERROR_NONE:
@@ -171,19 +182,35 @@ static int check_ssl_error(JNIEnv* env, SSL* ssl, int ret) {
             throw_socket_closed_cached(env);
             return 0;
         case SSL_ERROR_SYSCALL:
-        {
-            unsigned long e = ERR_peek_error();
-            if (e && !ERR_SYSTEM_ERROR(e)) {
-                throw_ssl_exception(env);
-            } else if (ret == 0 || errno == 0) {
-                // OpenSSL 1.0 and 1.1 return different error code in case of "dirty" connection close
-                throw_socket_closed_cached(env);
-            } else {
-                throw_io_exception(env);
+            sslSocketLogger->log("ERROR", "fd:(%d) SSL_ERROR_SYSCALL %s in state: %s[%s], client: %s, server: %s",
+                  SSL_get_fd(ssl),
+                  ERR_error_string(ERR_peek_error(), error),
+                  SSL_state_string(ssl),
+                  SSL_state_string_long(ssl),
+                  ssl_get_peer_ip(ssl, clientIP, sizeof(clientIP)),
+                  ssl_get_host_ip_port(ssl, serverIP, sizeof(serverIP))
+            );
+            {
+                unsigned long e = ERR_peek_error();
+                if (e && !ERR_SYSTEM_ERROR(e)) {
+                    throw_ssl_exception(env);
+                } else if (ret == 0 || errno == 0) {
+                    // OpenSSL 1.0 and 1.1 return different error code in case of "dirty" connection close
+                    throw_socket_closed_cached(env);
+                } else {
+                    throw_io_exception(env);
+                }
+                return 0;
             }
-            return 0;
-        }
         case SSL_ERROR_SSL:
+            sslSocketLogger->log("ERROR", "fd:(%d) SSL_ERROR_SSL '%s' in state: %s[%s], client: %s, server: %s",
+                  SSL_get_fd(ssl),
+                  ERR_error_string(ERR_peek_error(), error),
+                  SSL_state_string(ssl),
+                  SSL_state_string_long(ssl),
+                  ssl_get_peer_ip(ssl, clientIP, sizeof(clientIP)),
+                  ssl_get_host_ip_port(ssl, serverIP, sizeof(serverIP))
+            );
             // workaround for SSL_sendfile() OpenSSL issue #23722 [ https://github.com/openssl/openssl/issues/23722 ]
             {
                 int reason = ERR_GET_REASON(ERR_peek_error());
@@ -298,6 +325,24 @@ static void jni_ssl_context_log(const char* level, const char* fmt, ...) {
     jstring jmsg = (*env)->NewStringUTF(env, message);
 
     (*env)->CallStaticVoidMethod(env, c_NativeSslContext_JniLogger, m_NativeSslContext_log, jlevel, jmsg);
+}
+
+static void jni_ssl_socket_log(const char* level, const char* fmt, ...) {
+    JNIEnv* env;
+    if (JNI_OK != (*global_vm)->GetEnv(global_vm, (void**)&env, JNI_VERSION_1_8)) {
+        return;
+    }
+
+    char message[512];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+
+    jstring jlevel = (*env)->NewStringUTF(env, level);
+    jstring jmsg = (*env)->NewStringUTF(env, message);
+
+    (*env)->CallStaticVoidMethod(env, c_NativeSslSocket_JniLogger, m_NativeSslSocket_log, jlevel, jmsg);
 }
 
 static long get_session_counter(SSL_CTX* ctx, int key) {
@@ -643,6 +688,9 @@ Java_one_nio_net_NativeSslContext_init(JNIEnv* env, jclass cls) {
     c_NativeSslContext_JniLogger = (*env)->NewGlobalRef(env, (*env)->FindClass(env, "one/nio/net/NativeSslContext$JniLogger"));
     m_NativeSslContext_log = (*env)->GetStaticMethodID(env, c_NativeSslContext_JniLogger, "log", "(Ljava/lang/String;Ljava/lang/String;)V");
 
+    c_NativeSslSocket_JniLogger = (*env)->NewGlobalRef(env, (*env)->FindClass(env, "one/nio/net/NativeSslSocket$JniLogger"));
+    m_NativeSslSocket_log = (*env)->GetStaticMethodID(env, c_NativeSslSocket_JniLogger, "log", "(Ljava/lang/String;Ljava/lang/String;)V");
+
 }
 
 static int new_session_cb(SSL* ssl, SSL_SESSION* ssl_session) {
@@ -780,7 +828,7 @@ Java_one_nio_net_NativeSslContext_setDebug(JNIEnv* env, jobject self, jboolean d
     AppData* appData = SSL_CTX_get_app_data(ctx);
     appData->debug = debug;
     appData->sslContextLogger = (JniLogger){ .log = debug ? jni_ssl_context_log : noop_log };
-    appData->sslSocketLogger = (JniLogger){ .log = noop_log };
+    appData->sslSocketLogger = (JniLogger){ .log = debug ? jni_ssl_socket_log : noop_log };
 }
 
 JNIEXPORT jboolean JNICALL
@@ -1238,7 +1286,7 @@ Java_one_nio_net_NativeSslSocket_sslFree(JNIEnv* env, jclass cls, jlong sslptr) 
     JniLogger* jniLogger = &appData->sslContextLogger;
     char serverIP[64], clientIP[64];
 
-    jniLogger->log("INFO", "Closing SSL session in state: %s[%s], client: %s, server: %s",
+    jniLogger->log("DEBUG", "Closing SSL session in state: %s[%s], client: %s, server: %s",
            SSL_state_string(ssl),
            SSL_state_string_long(ssl),
            ssl_get_peer_ip(ssl, clientIP, sizeof(clientIP)),
